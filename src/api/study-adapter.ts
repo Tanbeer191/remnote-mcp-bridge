@@ -7,7 +7,7 @@
  * Chrome-automation script instead (see FINDINGS.md in the parent folder).
  */
 
-import { BuiltInPowerupCodes, type ReactRNPlugin } from '@remnote/plugin-sdk';
+import { BuiltInPowerupCodes, PowerupSlotCodeMap, type ReactRNPlugin } from '@remnote/plugin-sdk';
 import { type AutomationBridgeSettings, SETTING_ACCEPT_REPLACE_OPERATION } from '../settings';
 
 type PluginRemLike = NonNullable<Awaited<ReturnType<ReactRNPlugin['rem']['findOne']>>>;
@@ -42,6 +42,54 @@ export interface DeleteNoteParams {
 export interface GetCardsParams {
   remId: string;
   includeHistory?: boolean;
+}
+
+/**
+ * Hidden slots of RemNote's built-in Document powerup ("o"), found in RemNote's app code but
+ * missing from SDK 0.0.46's PowerupSlotCodeMap. The SDK translates slot *names* to codes through
+ * that map on the plugin side (unknown names are sent as undefined and rejected), so register the
+ * names once, then address the slots by name.
+ */
+const DOCUMENT_SLOT_CODES = { BulletIcon: 'b', HideBullets: 'h', FullWidth: 'w' } as const;
+const DOCUMENT_SLOTS = {
+  bulletIcon: 'BulletIcon',
+  hideBullets: 'HideBullets',
+  fullWidth: 'FullWidth',
+} as const;
+Object.assign(
+  (PowerupSlotCodeMap as unknown as Record<string, Record<string, string>>)[
+    BuiltInPowerupCodes.Document
+  ],
+  DOCUMENT_SLOT_CODES
+);
+const FOLDER_ICON_COLOURS = [
+  'yellow',
+  'yellow-light',
+  'green',
+  'green-light',
+  'blue',
+  'blue-light',
+  'purple',
+  'purple-light',
+  'red',
+  'red-light',
+] as const;
+
+export interface DocumentAppearance {
+  /** Icon path or emoji, e.g. "/offline_assets/emoji/folder-yellow.svg" or "🩺". */
+  bulletIcon?: string;
+  hideBullets?: boolean;
+  fullWidth?: boolean;
+}
+
+export interface SetDocumentAppearanceParams {
+  remId: string;
+  /** Shortcut for a folder icon colour, e.g. "yellow" -> /offline_assets/emoji/folder-yellow.svg */
+  folderColour?: (typeof FOLDER_ICON_COLOURS)[number];
+  bulletIcon?: string;
+  hideBullets?: boolean;
+  fullWidth?: boolean;
+  dryRun?: boolean;
 }
 
 export class StudyAdapter {
@@ -201,6 +249,93 @@ export class StudyAdapter {
           ...(params.includeHistory ? { history } : {}),
         };
       }),
+    };
+  }
+
+  // ------------------------------------------------------------------ document appearance
+
+  async getDocumentAppearance(params: { remId: string }) {
+    const rem = await this.findRem(requireString(params.remId, 'remId'));
+    return { remId: rem._id, title: await this.title(rem), ...(await this.readAppearance(rem)) };
+  }
+
+  /**
+   * Set folder icon / emoji, Hide Bullets and Full Width. Writes the Document powerup's hidden
+   * slots through the SDK's untyped setPowerupProperty overload, then reads them back.
+   */
+  async setDocumentAppearance(params: SetDocumentAppearanceParams) {
+    this.requireWrite();
+    const rem = await this.findRem(requireString(params.remId, 'remId'));
+    if (params.folderColour !== undefined && params.bulletIcon !== undefined) {
+      throw new Error('Pass folderColour or bulletIcon, not both');
+    }
+    if (params.folderColour !== undefined && !FOLDER_ICON_COLOURS.includes(params.folderColour)) {
+      throw new Error(`folderColour must be one of: ${FOLDER_ICON_COLOURS.join(', ')}`);
+    }
+    const requested: DocumentAppearance = {};
+    if (params.folderColour !== undefined) {
+      requested.bulletIcon = `/offline_assets/emoji/folder-${params.folderColour}.svg`;
+    } else if (params.bulletIcon !== undefined) {
+      requested.bulletIcon = requireString(params.bulletIcon, 'bulletIcon');
+    }
+    if (params.hideBullets !== undefined) {
+      requested.hideBullets = requireBoolean(params.hideBullets, 'hideBullets');
+    }
+    if (params.fullWidth !== undefined) {
+      requested.fullWidth = requireBoolean(params.fullWidth, 'fullWidth');
+    }
+    if (Object.keys(requested).length === 0) {
+      throw new Error('Nothing to set: pass folderColour, bulletIcon, hideBullets or fullWidth');
+    }
+    const before = await this.readAppearance(rem);
+    const base = { remId: rem._id, title: await this.title(rem), before, requested };
+    if (params.dryRun !== false) {
+      return { ...base, dryRun: true, changed: false };
+    }
+
+    if (!(await rem.hasPowerup(BuiltInPowerupCodes.Document))) {
+      await rem.addPowerup(BuiltInPowerupCodes.Document);
+    }
+    const write = (slot: string, value: string) =>
+      rem.setPowerupProperty(BuiltInPowerupCodes.Document as string, slot, [value]);
+    if (requested.bulletIcon !== undefined)
+      await write(DOCUMENT_SLOTS.bulletIcon, requested.bulletIcon);
+    if (requested.hideBullets !== undefined)
+      await write(DOCUMENT_SLOTS.hideBullets, String(requested.hideBullets));
+    if (requested.fullWidth !== undefined)
+      await write(DOCUMENT_SLOTS.fullWidth, String(requested.fullWidth));
+
+    const after = await this.readAppearance(rem);
+    const mismatched = (Object.keys(requested) as Array<keyof DocumentAppearance>).filter(
+      (k) => after[k] !== requested[k]
+    );
+    return {
+      ...base,
+      dryRun: false,
+      changed: true,
+      after,
+      ...(mismatched.length ? { warning: `Read-back differs for: ${mismatched.join(', ')}` } : {}),
+    };
+  }
+
+  private async readAppearance(rem: PluginRemLike): Promise<DocumentAppearance> {
+    const read = async (slot: string): Promise<string | undefined> => {
+      try {
+        const v = await rem.getPowerupProperty(BuiltInPowerupCodes.Document as string, slot);
+        return v === '' || v == null ? undefined : String(v);
+      } catch {
+        return undefined;
+      }
+    };
+    const [icon, hide, wide] = await Promise.all([
+      read(DOCUMENT_SLOTS.bulletIcon),
+      read(DOCUMENT_SLOTS.hideBullets),
+      read(DOCUMENT_SLOTS.fullWidth),
+    ]);
+    return {
+      ...(icon !== undefined ? { bulletIcon: icon } : {}),
+      ...(hide !== undefined ? { hideBullets: hide === 'true' } : {}),
+      ...(wide !== undefined ? { fullWidth: wide === 'true' } : {}),
     };
   }
 

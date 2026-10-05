@@ -593,6 +593,26 @@ class BridgeRuntimeController implements BridgeRuntime {
           includeHistory: payload.includeHistory as boolean | undefined,
         });
 
+      case 'get_document_appearance':
+        return await this.studyAdapter.getDocumentAppearance({ remId: payload.remId as string });
+
+      case 'set_document_appearance': {
+        const result = await this.studyAdapter.setDocumentAppearance({
+          remId: payload.remId as string,
+          folderColour: payload.folderColour as never,
+          bulletIcon: payload.bulletIcon as string | undefined,
+          hideBullets: payload.hideBullets as boolean | undefined,
+          fullWidth: payload.fullWidth as boolean | undefined,
+          dryRun: payload.dryRun as boolean | undefined,
+        });
+        if (result.changed) {
+          this.stats = { ...this.stats, updated: this.stats.updated + 1 };
+          this.addHistoryEntry('update', [`Appearance updated: ${result.title}`], [result.remId]);
+          this.emit();
+        }
+        return result;
+      }
+
       case 'get_status':
         return await this.adapter.getStatus();
 

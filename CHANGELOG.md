@@ -13,6 +13,11 @@ Versioning](https://semver.org/spec/v2.0.0.html).
   File powerup, added to a document's Sources), `add_source`, `remove_source`, `get_sources`, `set_folder_status`,
   `delete_note` (needs "Accept replace operation", read live from RemNote; dry-run first; exact `expectedTitle`), and
   `get_cards` (read-only). Structural writes default to dry-run.
+- (Fork) `get_document_appearance` / `set_document_appearance`: read and set a document's or folder's icon
+  (folder colour shortcut or raw icon/emoji), Hide Bullets and Full Width. These are hidden slots of the built-in
+  Document powerup (`b`, `h`, `w`) missing from SDK 0.0.46's `PowerupSlotCodeMap`; the bridge registers their names in
+  that map at load because the SDK translates slot names to codes plugin-side. Writes are dry-run by default and read
+  back after writing.
 - (Fork) Manifest id changed to `remnote-mcp-bridge-tanbeer` (name "MCP Automation Bridge (Tanbeer fork)") so the fork
   can be installed alongside the marketplace plugin. Card due dates are not supported in the plugin: RemNote 1.28
   forces every plugin into sandboxed mode, so internal card APIs are unreachable.

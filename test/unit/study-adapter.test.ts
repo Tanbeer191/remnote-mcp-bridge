@@ -152,6 +152,74 @@ describe('StudyAdapter', () => {
     expect(rem.setIsFolder).toHaveBeenCalledWith(true);
   });
 
+  describe('document appearance', () => {
+    function appearanceRem(initial: Record<string, string>) {
+      const store = { ...initial };
+      return makeRem('d', 'Doc', {
+        hasPowerup: vi.fn().mockResolvedValue(true),
+        getPowerupProperty: vi.fn(async (_code: string, slot: string) => store[slot] ?? ''),
+        setPowerupProperty: vi.fn(async (_code: string, slot: string, value: string[]) => {
+          store[slot] = value[0];
+        }),
+      });
+    }
+
+    it('registers the hidden Document slot names in the SDK map', async () => {
+      const { PowerupSlotCodeMap } = await import('@remnote/plugin-sdk');
+      const map = (PowerupSlotCodeMap as unknown as Record<string, Record<string, string>>).o;
+      expect(map).toMatchObject({ BulletIcon: 'b', HideBullets: 'h', FullWidth: 'w' });
+    });
+
+    it('reads icon and bullet settings by slot name', async () => {
+      const { adapter, rems } = setup();
+      rems.set(
+        'd',
+        appearanceRem({
+          BulletIcon: '/offline_assets/emoji/folder-yellow.svg',
+          HideBullets: 'false',
+        })
+      );
+      expect(await adapter.getDocumentAppearance({ remId: 'd' })).toMatchObject({
+        bulletIcon: '/offline_assets/emoji/folder-yellow.svg',
+        hideBullets: false,
+      });
+    });
+
+    it('previews by default, then writes folder colour and hide bullets', async () => {
+      const { adapter, rems } = setup();
+      const rem = appearanceRem({});
+      rems.set('d', rem);
+      const preview = await adapter.setDocumentAppearance({ remId: 'd', folderColour: 'yellow' });
+      expect(preview).toMatchObject({ dryRun: true, changed: false });
+      expect(rem.setPowerupProperty).not.toHaveBeenCalled();
+
+      const result = await adapter.setDocumentAppearance({
+        remId: 'd',
+        folderColour: 'yellow',
+        hideBullets: true,
+        dryRun: false,
+      });
+      expect(rem.setPowerupProperty).toHaveBeenCalledWith('o', 'BulletIcon', [
+        '/offline_assets/emoji/folder-yellow.svg',
+      ]);
+      expect(rem.setPowerupProperty).toHaveBeenCalledWith('o', 'HideBullets', ['true']);
+      expect(result).toMatchObject({
+        changed: true,
+        after: { bulletIcon: '/offline_assets/emoji/folder-yellow.svg', hideBullets: true },
+      });
+      expect(result).not.toHaveProperty('warning');
+    });
+
+    it('rejects unknown colours and empty requests', async () => {
+      const { adapter, rems } = setup();
+      rems.set('d', appearanceRem({}));
+      await expect(
+        adapter.setDocumentAppearance({ remId: 'd', folderColour: 'pink' as never })
+      ).rejects.toThrow('folderColour must be one of');
+      await expect(adapter.setDocumentAppearance({ remId: 'd' })).rejects.toThrow('Nothing to set');
+    });
+  });
+
   it('getCards summarises due state and last score', async () => {
     const { adapter, rems } = setup();
     rems.set(
