@@ -9,6 +9,14 @@ Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- (Fork: Tanbeer191) Study-workflow actions in `src/api/study-adapter.ts`: `attach_pdf` (PDF Rem with the Uploaded
+  File powerup, added to a document's Sources), `add_source`, `remove_source`, `get_sources`, `set_folder_status`,
+  `delete_note` (needs "Accept replace operation", read live from RemNote; dry-run first; exact `expectedTitle`), and
+  `get_cards` (read-only). Structural writes default to dry-run.
+- (Fork) Manifest id changed to `remnote-mcp-bridge-tanbeer` (name "MCP Automation Bridge (Tanbeer fork)") so the fork
+  can be installed alongside the marketplace plugin. Card due dates are not supported in the plugin: RemNote 1.28
+  forces every plugin into sandboxed mode, so internal card APIs are unreachable.
+
 - Add real RemNote alias writes to `create_note` and `update_note`, with whitespace normalization, exact additive and
   removal operations, idempotency, Unicode preservation, and protection against ambiguous or contradictory requests.
 

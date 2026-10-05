@@ -2,6 +2,7 @@ declare const __PLUGIN_VERSION__: string;
 
 import { FocusEvents, SidebarEvents, type ReactRNPlugin, WindowEvents } from '@remnote/plugin-sdk';
 import { RemAdapter } from '../api/rem-adapter';
+import { StudyAdapter } from '../api/study-adapter';
 import {
   type BridgeRequest,
   type CompanionInfo,
@@ -82,6 +83,7 @@ function formatCompanionKind(kind: CompanionInfo['kind']): string {
 
 class BridgeRuntimeController implements BridgeRuntime {
   private readonly adapter: RemAdapter;
+  private readonly studyAdapter: StudyAdapter;
   private readonly listeners = new Set<(snapshot: BridgeRuntimeSnapshot) => void>();
   private wsClient: WebSocketClient;
   private unregisterDevTools: (() => void) | null = null;
@@ -113,6 +115,7 @@ class BridgeRuntimeController implements BridgeRuntime {
     this.settings = settings;
     this.installMode = getBridgeInstallMode(plugin.rootURL);
     this.adapter = new RemAdapter(plugin, settings);
+    this.studyAdapter = new StudyAdapter(plugin, () => this.settings);
     this.wsClient = this.createWebSocketClient(settings.wsUrl);
     this.wsClient.setMessageHandler(this.handleRequest);
     this.adapter.updateSettings(settings);
@@ -516,6 +519,79 @@ class BridgeRuntimeController implements BridgeRuntime {
         this.emit();
         return result;
       }
+
+      case 'attach_pdf': {
+        const result = await this.studyAdapter.attachPdf({
+          documentRemId: payload.documentRemId as string,
+          url: payload.url as string,
+          fileName: payload.fileName as string,
+          uploadsFolderRemId: payload.uploadsFolderRemId as string | undefined,
+          dryRun: payload.dryRun as boolean | undefined,
+        });
+        if (result.created && result.pdfRemId) {
+          this.stats = { ...this.stats, created: this.stats.created + 1 };
+          this.addHistoryEntry('create', [`PDF attached: ${result.fileName}`], [result.pdfRemId]);
+          this.emit();
+        }
+        return result;
+      }
+
+      case 'add_source':
+      case 'remove_source': {
+        const params = {
+          remId: payload.remId as string,
+          sourceRemId: payload.sourceRemId as string,
+        };
+        const result =
+          request.action === 'add_source'
+            ? await this.studyAdapter.addSource(params)
+            : await this.studyAdapter.removeSource(params);
+        this.stats = { ...this.stats, updated: this.stats.updated + 1 };
+        this.addHistoryEntry('update', ['Sources updated'], [result.remId]);
+        this.emit();
+        return result;
+      }
+
+      case 'get_sources':
+        return await this.studyAdapter.getSources({ remId: payload.remId as string });
+
+      case 'set_folder_status': {
+        const result = await this.studyAdapter.setFolderStatus({
+          remId: payload.remId as string,
+          isFolder: payload.isFolder as boolean,
+          dryRun: payload.dryRun as boolean | undefined,
+        });
+        if (result.changed) {
+          this.stats = { ...this.stats, updated: this.stats.updated + 1 };
+          this.addHistoryEntry(
+            'update',
+            [`Folder status updated: ${result.title}`],
+            [result.remId]
+          );
+          this.emit();
+        }
+        return result;
+      }
+
+      case 'delete_note': {
+        const result = await this.studyAdapter.deleteNote({
+          remId: payload.remId as string,
+          dryRun: payload.dryRun as boolean | undefined,
+          expectedTitle: payload.expectedTitle as string | undefined,
+        });
+        if (result.deleted) {
+          this.stats = { ...this.stats, updated: this.stats.updated + 1 };
+          this.addHistoryEntry('update', [`Deleted ${result.title}`], [result.remId]);
+          this.emit();
+        }
+        return result;
+      }
+
+      case 'get_cards':
+        return await this.studyAdapter.getCards({
+          remId: payload.remId as string,
+          includeHistory: payload.includeHistory as boolean | undefined,
+        });
 
       case 'get_status':
         return await this.adapter.getStatus();
