@@ -18,6 +18,10 @@ Versioning](https://semver.org/spec/v2.0.0.html).
   Document powerup (`b`, `h`, `w`) missing from SDK 0.0.46's `PowerupSlotCodeMap`; the bridge registers their names in
   that map at load because the SDK translates slot names to codes plugin-side. Writes are dry-run by default and read
   back after writing.
+- (Fork) `create_table`: simple table from a header row and body rows. Built through RemNote's Markdown import (a
+  Markdown table becomes a simple table; the SDK's `createTable` makes an Advanced Table and needs an existing tag). The
+  import wraps the table in an empty Rem, so the action moves the table up into the wrapper's place, removes the
+  wrapper, and returns the table's Rem ID. Pipes and line breaks in cells are escaped.
 - (Fork) Manifest id changed to `remnote-mcp-bridge-tanbeer` (name "MCP Automation Bridge (Tanbeer fork)") so the fork
   can be installed alongside the marketplace plugin. Card due dates are not supported in the plugin: RemNote 1.28
   forces every plugin into sandboxed mode, so internal card APIs are unreachable.

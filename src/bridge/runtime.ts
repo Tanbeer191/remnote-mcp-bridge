@@ -613,6 +613,26 @@ class BridgeRuntimeController implements BridgeRuntime {
         return result;
       }
 
+      case 'create_table': {
+        const result = await this.studyAdapter.createTable({
+          parentRemId: payload.parentRemId as string,
+          columns: payload.columns as string[],
+          rows: payload.rows as string[][] | undefined,
+          position: payload.position as never,
+          dryRun: payload.dryRun as boolean | undefined,
+        });
+        if (result.created) {
+          this.stats = { ...this.stats, created: this.stats.created + 1 };
+          this.addHistoryEntry(
+            'create',
+            [`Table created: ${result.columns.join(' | ')}`],
+            [result.tableRemId as string]
+          );
+          this.emit();
+        }
+        return result;
+      }
+
       case 'get_status':
         return await this.adapter.getStatus();
 

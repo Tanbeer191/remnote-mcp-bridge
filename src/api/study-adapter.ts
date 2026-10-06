@@ -7,7 +7,12 @@
  * Chrome-automation script instead (see FINDINGS.md in the parent folder).
  */
 
-import { BuiltInPowerupCodes, PowerupSlotCodeMap, type ReactRNPlugin } from '@remnote/plugin-sdk';
+import {
+  BuiltInPowerupCodes,
+  PowerupSlotCodeMap,
+  RemType,
+  type ReactRNPlugin,
+} from '@remnote/plugin-sdk';
 import { type AutomationBridgeSettings, SETTING_ACCEPT_REPLACE_OPERATION } from '../settings';
 
 type PluginRemLike = NonNullable<Awaited<ReturnType<ReactRNPlugin['rem']['findOne']>>>;
@@ -80,6 +85,16 @@ export interface DocumentAppearance {
   bulletIcon?: string;
   hideBullets?: boolean;
   fullWidth?: boolean;
+}
+
+export interface CreateTableParams {
+  parentRemId: string;
+  /** Header row, left to right. */
+  columns: string[];
+  /** Body rows; each row has at most one cell per column (missing cells are left empty). */
+  rows?: string[][];
+  position?: 'first' | 'last';
+  dryRun?: boolean;
 }
 
 export interface SetDocumentAppearanceParams {
@@ -339,6 +354,86 @@ export class StudyAdapter {
     };
   }
 
+  // ------------------------------------------------------------------ tables
+
+  /**
+   * Create a simple table (RemNote's grid table, the kind /table makes) under a parent.
+   * RemNote's own Markdown import turns a Markdown table into a simple table; the SDK's
+   * createTable makes an Advanced Table instead and has no setting for the simple view. The
+   * import returns no Rem IDs for tables, so the new table is found by comparing the parent's
+   * children before and after.
+   */
+  async createTable(params: CreateTableParams) {
+    this.requireWrite();
+    const parent = await this.findRem(requireString(params.parentRemId, 'parentRemId'));
+    if (!Array.isArray(params.columns) || params.columns.length === 0) {
+      throw new Error('columns must be a non-empty array of header names');
+    }
+    const columns = params.columns.map((c, i) => requireString(c, `columns[${i}]`));
+    const rows = (params.rows ?? []).map((r, i) => {
+      if (!Array.isArray(r) || r.some((c) => typeof c !== 'string')) {
+        throw new Error(`rows[${i}] must be an array of strings`);
+      }
+      if (r.length > columns.length) {
+        throw new Error(`rows[${i}] has ${r.length} cells but there are ${columns.length} columns`);
+      }
+      return [...r, ...Array(columns.length - r.length).fill('')] as string[];
+    });
+    const position = params.position ?? 'last';
+    if (position !== 'first' && position !== 'last') {
+      throw new Error('position must be "first" or "last"');
+    }
+    const markdown = [
+      markdownTableRow(columns),
+      markdownTableRow(columns.map(() => '---')),
+      ...rows.map(markdownTableRow),
+    ].join('\n');
+    const preview = {
+      parentRemId: parent._id,
+      parentTitle: await this.title(parent),
+      columns,
+      rowCount: rows.length,
+      position,
+      markdown,
+    };
+    if (params.dryRun !== false) {
+      return {
+        ...preview,
+        dryRun: true,
+        created: false,
+        tableRemId: undefined as string | undefined,
+      };
+    }
+
+    const before = new Set((await parent.getChildrenRem()).map((r) => r._id));
+    await this.plugin.rem.createTreeWithMarkdown(markdown, parent._id);
+    const added = (await parent.getChildrenRem()).filter((r) => !before.has(r._id));
+    if (added.length !== 1) {
+      throw new Error(
+        `Expected 1 new table under the parent, found ${added.length} (${added.map((r) => r._id).join(', ')})`
+      );
+    }
+    // createTreeWithMarkdown wraps the table in an empty Rem; lift the table into the wrapper's
+    // place and remove the wrapper (created by this call, so nothing of the user's is lost).
+    let table = added[0];
+    const wrapperChildren = await table.getChildrenRem();
+    if (
+      (await this.title(table)).trim() === '' &&
+      wrapperChildren.length === 1 &&
+      wrapperChildren[0].type === RemType.PORTAL
+    ) {
+      const wrapper = table;
+      const index = (await parent.getChildrenRem()).findIndex((r) => r._id === wrapper._id);
+      table = wrapperChildren[0];
+      await table.setParent(parent._id, index);
+      await wrapper.remove();
+    }
+    if (position === 'first') {
+      await table.setParent(parent._id, 0);
+    }
+    return { ...preview, dryRun: false, created: true, tableRemId: table._id };
+  }
+
   // ------------------------------------------------------------------ helpers
 
   private requireWrite(): void {
@@ -400,4 +495,9 @@ function requireBoolean(value: unknown, name: string): boolean {
     throw new Error(`${name} must be a boolean`);
   }
   return value;
+}
+
+/** One Markdown table row; escapes pipes and flattens line breaks so a cell stays in its column. */
+function markdownTableRow(cells: string[]): string {
+  return `| ${cells.map((c) => c.replace(/\|/g, '\\|').replace(/\r?\n/g, ' ').trim()).join(' | ')} |`;
 }
